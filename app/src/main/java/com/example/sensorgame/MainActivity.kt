@@ -49,6 +49,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+// Class 2
+import androidx.compose.foundation.Image
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.res.painterResource
+import kotlin.math.sqrt
+import kotlin.random.Random
+
 
 // fixed on screen size of ball, not state - it never changes after launch
 private const val BALL_SIZE_DP = 60
@@ -96,6 +104,29 @@ fun SensorGameScreen() {
     // pixels the ball moves per gyro unit per frame
     val baseSpeed = 5f
 
+    // Accelerometer
+    val accelerometer = remember { sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)}
+    var lastShakeTime by remember { mutableStateOf(0L) }
+    val shakeThreshold = 12f // m/s above gravity to count as a shake
+    val shakeCooldown = 1500L // minimum ms between shake events
+
+    // Ball color cycling
+    var colorIndex by remember { mutableIntStateOf(0)}
+    val ballColors = remember {
+        listOf(
+            Color.Blue,
+            Color.Red,
+            Color.Green,
+            Color.Magenta,
+            Color.Yellow
+        )
+    }
+
+    // Stars - a list of positions, not a list of View objects
+    val starPx = with(density) {32.dp.toPx() }
+    val starCount = 5
+    val stars = remember { mutableStateListOf<Offset>() }
+
     fun moveBallWithGyro() {
         if (!hasGyroscope) return
         // Assignment 1
@@ -116,6 +147,47 @@ fun SensorGameScreen() {
         ballY = ballY.coerceIn(0f, (areaHeightPx - ballPx).coerceAtLeast(0f))
     }
 
+    fun onShakeDetected() {
+        // Assignment 2
+        // 1. Move to the next color in the list, wrapping back to the start the last one
+        // 2. Give the player some feedback that ashake was detected
+        colorIndex = (colorIndex + 1) % ballColors.size
+
+        Toast.makeText(
+            context,
+            "Shake detected",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    fun spawnStars() {
+        stars.clear()
+        val bottomMarginPx = with(density) { 120.dp.toPx() }
+        val safeHeight = (areaHeightPx - bottomMarginPx).coerceAtLeast(starPx * 2)
+        repeat(starCount) {
+            val x = Random.nextFloat() * (areaWidthPx - starPx)
+            val y = Random.nextFloat() * (safeHeight - starPx)
+            stars.add(Offset(x, y))
+        }
+    }
+
+    fun checkStarCollisions() {
+        val ballRight = ballX + ballPx
+        val ballBottom = ballY + ballPx
+        val collected = mutableListOf<Offset>()
+        for (star in stars) {
+            if (ballX < star.x + starPx && ballRight > star.x &&
+                ballY < star.y + starPx && ballBottom > star.y) {
+                collected.add(star)
+            }
+        }
+        for (star in collected) {
+            stars.remove(star)
+            score += 10
+        }
+        if (stars.isEmpty()) spawnStars()
+    }
+
     // Registers the gyroscope listener while the screen is visible, unregisters when it
     // isn't.  DisposableEffect + LifecycleEventObserver is the Compose equivalent of the
     // onResume() / onPause() / onDestroy() trio in a Views Activity.
@@ -123,15 +195,34 @@ fun SensorGameScreen() {
     DisposableEffect(lifecycleOwner) {
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
-                // Assignemnt 2
+                // Assignment 2
                 // 1. Check which sensor this event came from
                 // 2. If it's the gyroscope, store its readings so moveBallWithGyro() can use them
                 if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
                     // Store the X-axis reading
                     gyroX = event.values[0]
-
                     // Store the Y-axis reading
                     gyroY = event.values[1]
+                }
+                // Sensor.TYPE_ACCELEROMETER -> {
+                    // Assignment 2
+                    // 1. Read the three acceleration axes from this event
+                    // 2. Work out how much force is being applied beyond gravity
+                    // 3. If that force is large enough, and the cooldown has passed, react to the shake
+                val ax = event.values[0]
+                val ay = event.values[1]
+                val az = event.values[2]
+
+                // magnitude of total acceleration minus constant gravity
+                val net = sqrt(ax * ax + ay + ay + az * az) - SensorManager.GRAVITY_EARTH
+
+                val now = android.os.SystemClock.elapsedRealtime()
+
+                if (net > shakeThreshold &&
+                    now - lastShakeTime >= shakeCooldown
+                ) {
+                    lastShakeTime = now
+                    onShakeDetected()
                 }
             }
 
@@ -173,6 +264,7 @@ fun SensorGameScreen() {
         while (isActive) {
             delay(33L)
             moveBallWithGyro()
+            checkStarCollisions()
         }
     }
 
@@ -190,6 +282,7 @@ fun SensorGameScreen() {
 
                     // Center the ball vertically
                     ballY = (areaHeightPx - ballPx) / 2f
+                    spawnStars()
                 }
             }
             .pointerInput(Unit) {
@@ -232,8 +325,19 @@ fun SensorGameScreen() {
                     )
                 }
                 .size(BALL_SIZE_DP.dp)
-                .background(Color.Cyan, CircleShape)
+                .background(ballColors[colorIndex], CircleShape)
         )
+
+        stars.forEach { starPos ->
+            Image(
+                painter = painterResource(R.drawable.star_shape),
+                contentDescription = null,
+                modifier = Modifier
+                    .offset {IntOffset(starPos.x.roundToInt(), starPos.y.roundToInt()) }
+                    .size(32.dp)
+            )
+        }
+
         // Shake and GPS buttons
         Row(
             modifier = Modifier
@@ -242,8 +346,8 @@ fun SensorGameScreen() {
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Button(
-                onClick = {},
-                enabled = false
+                onClick = {onShakeDetected() },
+                enabled = true
             ) {
                 Text("Shake")
             }

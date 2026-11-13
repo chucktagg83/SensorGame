@@ -3,6 +3,8 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+layout.buildDirectory.set(file("/Users/charlestaggart/SensorGameBuild/app"))
+
 android {
     namespace = "com.example.sensorgame"
     compileSdk {
